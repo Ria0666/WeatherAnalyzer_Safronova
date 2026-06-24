@@ -1,8 +1,6 @@
 #include "ReportService.h"
 
 #include <algorithm>
-#include <cmath>
-#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -16,6 +14,12 @@ namespace {
     struct ChartPoint {
         std::string label;
         double value;
+    };
+
+    struct TrendInfo {
+        bool hasTrend = false;
+        double slope = 0.0;
+        std::string description;
     };
 
     std::string escapeHtml(const std::string& text) {
@@ -89,6 +93,58 @@ namespace {
     std::string makeFileUrl(const std::string& fileName) {
         std::filesystem::path absolutePath = std::filesystem::absolute(fileName);
         return "file://" + absolutePath.string();
+    }
+
+    std::string getTrendText(double slope) {
+        if (std::abs(slope) < 0.03) {
+            return "Температурный тренд за выбранный период можно считать стабильным.";
+        }
+
+        if (slope > 0.0) {
+            return "За выбранный период наблюдается положительный температурный тренд: средняя температура постепенно увеличивается.";
+        }
+
+        return "За выбранный период наблюдается отрицательный температурный тренд: средняя температура постепенно уменьшается.";
+    }
+
+    TrendInfo calculateTrend(const std::vector<ChartPoint>& points) {
+        TrendInfo info;
+
+        if (points.size() < 2) {
+            info.hasTrend = false;
+            info.description = "Недостаточно данных для расчёта температурного тренда.";
+            return info;
+        }
+
+        double sumX = 0.0;
+        double sumY = 0.0;
+        double sumXY = 0.0;
+        double sumXX = 0.0;
+
+        for (size_t i = 0; i < points.size(); i++) {
+            double x = static_cast<double>(i);
+            double y = points[i].value;
+
+            sumX += x;
+            sumY += y;
+            sumXY += x * y;
+            sumXX += x * x;
+        }
+
+        double n = static_cast<double>(points.size());
+        double denominator = n * sumXX - sumX * sumX;
+
+        if (denominator == 0.0) {
+            info.hasTrend = false;
+            info.description = "Не удалось рассчитать температурный тренд.";
+            return info;
+        }
+
+        info.slope = (n * sumXY - sumX * sumY) / denominator;
+        info.hasTrend = true;
+        info.description = getTrendText(info.slope);
+
+        return info;
     }
 
     std::string makeLineChart(
@@ -201,99 +257,120 @@ namespace {
     }
 
     std::string makeBarChart(
-        const std::vector<ChartPoint>& data,
-        const std::string& title,
-        const std::string& unit
-    ) {
-        if (data.empty()) {
-            return "<div class='empty-block'>Нет данных для построения диаграммы.</div>";
-        }
+    const std::vector<ChartPoint>& data,
+    const std::string& title,
+    const std::string& unit
+) {
+    if (data.empty()) {
+        return "<div class='empty-block'>Нет данных для построения диаграммы.</div>";
+    }
 
-        double maxValue = 0.0;
+    double minValue = data[0].value;
+    double maxValue = data[0].value;
 
-        for (const ChartPoint& point : data) {
-            maxValue = std::max(maxValue, point.value);
-        }
+    for (const ChartPoint& point : data) {
+        minValue = std::min(minValue, point.value);
+        maxValue = std::max(maxValue, point.value);
+    }
+    minValue = std::min(minValue, 0.0);
+    maxValue = std::max(maxValue, 0.0);
 
-        if (maxValue < 0.0001) {
-            maxValue = 1.0;
-        }
+    if (std::abs(maxValue - minValue) < 0.0001) {
+        maxValue += 1.0;
+        minValue -= 1.0;
+    }
 
-        const int width = 900;
-        const int height = 310;
-        const int left = 70;
-        const int right = 30;
-        const int top = 42;
-        const int bottom = 70;
+    const int width = 900;
+    const int height = 330;
+    const int left = 70;
+    const int right = 30;
+    const int top = 42;
+    const int bottom = 80;
 
-        int chartWidth = width - left - right;
-        int chartHeight = height - top - bottom;
+    int chartWidth = width - left - right;
+    int chartHeight = height - top - bottom;
 
-        int barGap = 12;
-        int barWidth = std::max(
-            18,
-            (chartWidth - static_cast<int>(data.size()) * barGap) /
-            static_cast<int>(data.size())
-        );
+    auto getY = [&](double value) {
+        double ratio = (value - minValue) / (maxValue - minValue);
+        return top + chartHeight - static_cast<int>(ratio * chartHeight);
+    };
 
-        std::ostringstream svg;
+    int zeroY = getY(0.0);
 
-        svg << "<div class='chart-card'>";
-        svg << "<h3>" << escapeHtml(title) << "</h3>";
-        svg << "<svg width='" << width << "' height='" << height << "' viewBox='0 0 "
-            << width << " " << height << "'>";
+    int barGap = 18;
+    int barWidth = std::max(
+        18,
+        (chartWidth - static_cast<int>(data.size()) * barGap) /
+        static_cast<int>(data.size())
+    );
 
-        svg << "<rect x='0' y='0' width='" << width << "' height='" << height
-            << "' rx='18' fill='#f8fcff'/>";
+    std::ostringstream svg;
 
-        for (int i = 0; i <= 4; i++) {
-            double ratio = static_cast<double>(i) / 4.0;
-            int y = top + static_cast<int>(ratio * chartHeight);
-            double value = maxValue - ratio * maxValue;
+    svg << "<div class='chart-card'>";
+    svg << "<h3>" << escapeHtml(title) << "</h3>";
+    svg << "<svg width='" << width << "' height='" << height << "' viewBox='0 0 "
+        << width << " " << height << "'>";
 
-            svg << "<line x1='" << left << "' y1='" << y
-                << "' x2='" << width - right << "' y2='" << y
-                << "' stroke='#d8ecf8' stroke-width='1'/>";
+    svg << "<rect x='0' y='0' width='" << width << "' height='" << height
+        << "' rx='18' fill='#f8fcff'/>";
 
-            svg << "<text x='15' y='" << y + 5
-                << "' font-size='12' fill='#57758a'>"
-                << formatDouble(value)
-                << "</text>";
-        }
+    for (int i = 0; i <= 4; i++) {
+        double ratio = static_cast<double>(i) / 4.0;
+        double value = maxValue - ratio * (maxValue - minValue);
+        int y = getY(value);
 
-        for (size_t i = 0; i < data.size(); i++) {
-            double ratio = data[i].value / maxValue;
-            int barHeight = static_cast<int>(ratio * chartHeight);
+        svg << "<line x1='" << left << "' y1='" << y
+            << "' x2='" << width - right << "' y2='" << y
+            << "' stroke='#d8ecf8' stroke-width='1'/>";
 
-            int x = left + static_cast<int>(i) * (barWidth + barGap);
-            int y = top + chartHeight - barHeight;
+        svg << "<text x='15' y='" << y + 5
+            << "' font-size='12' fill='#57758a'>"
+            << formatDouble(value)
+            << "</text>";
+    }
+    svg << "<line x1='" << left << "' y1='" << zeroY
+        << "' x2='" << width - right << "' y2='" << zeroY
+        << "' stroke='#6aa9c8' stroke-width='2'/>";
 
-            svg << "<rect x='" << x << "' y='" << y
-                << "' width='" << barWidth << "' height='" << barHeight
-                << "' rx='7' fill='#48b9e8'/>";
+    for (size_t i = 0; i < data.size(); i++) {
+        int x = left + static_cast<int>(i) * (barWidth + barGap);
 
-            svg << "<text x='" << x << "' y='" << height - 35
-                << "' font-size='11' fill='#57758a'>"
-                << escapeHtml(data[i].label)
-                << "</text>";
-        }
+        int valueY = getY(data[i].value);
+        int y = std::min(valueY, zeroY);
+        int barHeight = std::abs(valueY - zeroY);
 
-        svg << "<text x='" << width - 120 << "' y='24' font-size='13' fill='#57758a'>"
-            << escapeHtml(unit)
+        svg << "<rect x='" << x << "' y='" << y
+            << "' width='" << barWidth << "' height='" << barHeight
+            << "' rx='7' fill='#48b9e8'/>";
+
+        svg << "<text x='" << x << "' y='" << height - 40
+            << "' font-size='11' fill='#57758a'>"
+            << escapeHtml(data[i].label)
             << "</text>";
 
-        svg << "</svg>";
-        svg << "</div>";
-
-        return svg.str();
+        svg << "<text x='" << x << "' y='" << y - 6
+            << "' font-size='11' fill='#31566d'>"
+            << formatDouble(data[i].value)
+            << "</text>";
     }
+
+    svg << "<text x='" << width - 120 << "' y='24' font-size='13' fill='#57758a'>"
+        << escapeHtml(unit)
+        << "</text>";
+
+    svg << "</svg>";
+    svg << "</div>";
+
+    return svg.str();
+}
 
     std::string buildConclusion(
         bool hasStats,
         double avgTemp,
         double totalPrecipitation,
         int rainyDaysCount,
-        int anomalyCount
+        int anomalyCount,
+        const TrendInfo& trendInfo
     ) {
         if (!hasStats) {
             return "Для выбранного периода недостаточно данных, чтобы сформировать итоговый аналитический вывод.";
@@ -315,6 +392,10 @@ namespace {
             text << "Система обнаружила "
                  << anomalyCount
                  << " аномальных температурных дней. ";
+        }
+
+        if (trendInfo.hasTrend) {
+            text << trendInfo.description << " ";
         }
 
         text << "В разделе прогноза представлены ожидаемые значения температуры "
@@ -397,6 +478,34 @@ std::string ReportService::createHtmlReportFile(
         "AND o.observation_time::date BETWEEN $2 AND $3 "
         "GROUP BY year_num, month_num "
         "ORDER BY year_num, month_num",
+        cityName,
+        startDate,
+        endDate
+    );
+
+    pqxx::result seasonalTemp = tx.exec_params(
+        "SELECT "
+        "CASE "
+        "    WHEN EXTRACT(MONTH FROM o.observation_time) IN (12, 1, 2) THEN 'Зима' "
+        "    WHEN EXTRACT(MONTH FROM o.observation_time) IN (3, 4, 5) THEN 'Весна' "
+        "    WHEN EXTRACT(MONTH FROM o.observation_time) IN (6, 7, 8) THEN 'Лето' "
+        "    ELSE 'Осень' "
+        "END AS season_name, "
+        "CASE "
+        "    WHEN EXTRACT(MONTH FROM o.observation_time) IN (12, 1, 2) THEN 1 "
+        "    WHEN EXTRACT(MONTH FROM o.observation_time) IN (3, 4, 5) THEN 2 "
+        "    WHEN EXTRACT(MONTH FROM o.observation_time) IN (6, 7, 8) THEN 3 "
+        "    ELSE 4 "
+        "END AS season_order, "
+        "AVG(o.temperature) AS avg_temp "
+        "FROM weather_observations o "
+        "JOIN weather_stations s ON s.id = o.station_id "
+        "JOIN cities c ON c.id = s.city_id "
+        "WHERE c.name = $1 "
+        "AND o.observation_time::date BETWEEN $2 AND $3 "
+        "AND o.temperature IS NOT NULL "
+        "GROUP BY season_name, season_order "
+        "ORDER BY season_order",
         cityName,
         startDate,
         endDate
@@ -494,6 +603,7 @@ std::string ReportService::createHtmlReportFile(
     std::vector<ChartPoint> dailyTempPoints;
     std::vector<ChartPoint> monthlyTempPoints;
     std::vector<ChartPoint> monthlyPrecipitationPoints;
+    std::vector<ChartPoint> seasonalTempPoints;
     std::vector<ChartPoint> tempForecastPoints;
     std::vector<ChartPoint> precipitationForecastPoints;
     std::vector<ChartPoint> cityTemperaturePoints;
@@ -529,6 +639,13 @@ std::string ReportService::createHtmlReportFile(
         monthlyPrecipitationPoints.push_back({
             getMonthName(month) + " " + std::to_string(year),
             value
+        });
+    }
+
+    for (const auto& row : seasonalTemp) {
+        seasonalTempPoints.push_back({
+            row["season_name"].as<std::string>(),
+            row["avg_temp"].as<double>()
         });
     }
 
@@ -596,6 +713,7 @@ std::string ReportService::createHtmlReportFile(
     }
 
     int anomalyCount = static_cast<int>(anomalies.size());
+    TrendInfo trendInfo = calculateTrend(dailyTempPoints);
 
     std::filesystem::create_directories("reports");
 
@@ -691,7 +809,43 @@ std::string ReportService::createHtmlReportFile(
     report << "</div>\n";
 
     report << "<div class='section'>\n";
-    report << "<h2>3. Осадки</h2>\n";
+    report << "<h2>3. Сезонный анализ температуры</h2>\n";
+    report << makeBarChart(seasonalTempPoints, "Средняя температура по сезонам", "°C");
+
+    if (!seasonalTempPoints.empty()) {
+        report << "<table>\n";
+        report << "<tr><th>Сезон</th><th>Средняя температура, °C</th></tr>\n";
+
+        for (const ChartPoint& point : seasonalTempPoints) {
+            report << "<tr>";
+            report << "<td>" << escapeHtml(point.label) << "</td>";
+            report << "<td>" << formatDouble(point.value) << "</td>";
+            report << "</tr>\n";
+        }
+
+        report << "</table>\n";
+    }
+
+    report << "</div>\n";
+
+    report << "<div class='section'>\n";
+    report << "<h2>4. Долгосрочный температурный тренд</h2>\n";
+
+    if (trendInfo.hasTrend) {
+        report << "<div class='cards'>\n";
+        report << "<div class='card'><div class='label'>Коэффициент тренда</div><div class='value'>"
+               << formatDouble(trendInfo.slope)
+               << " °C/день</div></div>\n";
+        report << "</div>\n";
+        report << "<p class='note'>" << escapeHtml(trendInfo.description) << "</p>\n";
+    } else {
+        report << "<div class='empty-block'>" << escapeHtml(trendInfo.description) << "</div>\n";
+    }
+
+    report << "</div>\n";
+
+    report << "<div class='section'>\n";
+    report << "<h2>5. Осадки</h2>\n";
     report << "<div class='cards'>\n";
     report << "<div class='card'><div class='label'>Суммарные осадки</div><div class='value'>"
            << formatDouble(totalPrecipitation) << " мм</div></div>\n";
@@ -702,13 +856,13 @@ std::string ReportService::createHtmlReportFile(
     report << "</div>\n";
 
     report << "<div class='section'>\n";
-    report << "<h2>4. Сравнение городов</h2>\n";
+    report << "<h2>6. Сравнение городов</h2>\n";
     report << makeBarChart(cityTemperaturePoints, "Средняя температура по городам", "°C");
     report << makeBarChart(cityPrecipitationPoints, "Суммарные осадки по городам", "мм");
     report << "</div>\n";
 
     report << "<div class='section'>\n";
-    report << "<h2>5. Таблица аналитических показателей</h2>\n";
+    report << "<h2>7. Таблица аналитических показателей</h2>\n";
     report << "<table>\n";
     report << "<tr><th>Месяц</th><th>Средняя температура, °C</th><th>Осадки, мм</th></tr>\n";
 
@@ -735,7 +889,7 @@ std::string ReportService::createHtmlReportFile(
     report << "</div>\n";
 
     report << "<div class='section'>\n";
-    report << "<h2>6. Найденные аномальные дни</h2>\n";
+    report << "<h2>8. Найденные аномальные дни</h2>\n";
 
     if (anomalies.empty()) {
         report << "<div class='empty-block'>За выбранный период аномальные дни не найдены.</div>\n";
@@ -767,7 +921,7 @@ std::string ReportService::createHtmlReportFile(
     report << "</div>\n";
 
     report << "<div class='section'>\n";
-    report << "<h2>7. Результаты прогноза</h2>\n";
+    report << "<h2>9. Результаты прогноза</h2>\n";
     report << "<p class='note'>Прогноз строится на 7 дней после окончания выбранного периода наблюдений.</p>\n";
     report << makeLineChart(tempForecastPoints, "Прогноз температуры", "°C");
     report << makeBarChart(precipitationForecastPoints, "Прогноз вероятности осадков", "%");
@@ -807,14 +961,15 @@ std::string ReportService::createHtmlReportFile(
     report << "</div>\n";
 
     report << "<div class='section'>\n";
-    report << "<h2>8. Итоговый аналитический вывод</h2>\n";
+    report << "<h2>10. Итоговый аналитический вывод</h2>\n";
     report << "<p class='note'>"
            << escapeHtml(buildConclusion(
                hasStats,
                avgTemp,
                totalPrecipitation,
                rainyDaysCount,
-               anomalyCount
+               anomalyCount,
+               trendInfo
            ))
            << "</p>\n";
     report << "</div>\n";

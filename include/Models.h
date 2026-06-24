@@ -2,7 +2,6 @@
 
 #include <optional>
 #include <string>
-#include <vector>
 
 struct City {
     int id = 0;

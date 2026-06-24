@@ -38,4 +38,15 @@ public:
         const std::string& startDate,
         const std::string& endDate
     );
+
+    void showSeasonalTemperature(
+        const std::string& cityName,
+        int year
+    );
+
+    void showTemperatureTrend(
+        const std::string& cityName,
+        const std::string& startDate,
+        const std::string& endDate
+    );
 };

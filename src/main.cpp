@@ -10,7 +10,6 @@
 #include "ReportService.h"
 #include "StationRepository.h"
 
-#include <cctype>
 #include <iostream>
 #include <limits>
 #include <string>
@@ -128,6 +127,8 @@ int main() {
             std::cout << "11. Build precipitation probability forecast" << std::endl;
             std::cout << "12. Show precipitation probability forecast" << std::endl;
             std::cout << "13. Create PDF report" << std::endl;
+            std::cout << "14. Seasonal temperature analysis" << std::endl;
+            std::cout << "15. Long-term temperature trend" << std::endl;
             std::cout << "0. Exit" << std::endl;
             std::cout << "Choose: ";
 
@@ -240,6 +241,7 @@ int main() {
                 std::string cityName;
                 std::string startDate;
                 std::string endDate;
+                double precipitationLimit;
 
                 std::cout << "City name: ";
                 clearInputLine();
@@ -255,13 +257,21 @@ int main() {
                     continue;
                 }
 
-                double limit = 0.0;
+                std::cout << "Precipitation threshold, mm: ";
+                std::cin >> precipitationLimit;
+
+                if (std::cin.fail()) {
+                    std::cin.clear();
+                    clearInputLine();
+                    std::cout << "Wrong threshold." << std::endl;
+                    continue;
+                }
 
                 analytics.showRainyDays(
                     cityName,
                     startDate,
                     endDate,
-                    limit
+                    precipitationLimit
                 );
             }
 
@@ -493,6 +503,53 @@ int main() {
                 }
 
                 reportService.createPdfReport(
+                    cityName,
+                    startDate,
+                    endDate
+                );
+            }
+
+            else if (choice == 14) {
+                std::string cityName;
+                int year;
+
+                std::cout << "City name: ";
+                clearInputLine();
+                std::getline(std::cin, cityName);
+
+                std::cout << "Year: ";
+                std::cin >> year;
+
+                if (std::cin.fail()) {
+                    std::cin.clear();
+                    clearInputLine();
+                    std::cout << "Wrong year." << std::endl;
+                    continue;
+                }
+
+                analytics.showSeasonalTemperature(cityName, year);
+            }
+
+            else if (choice == 15) {
+                std::string cityName;
+                std::string startDate;
+                std::string endDate;
+
+                std::cout << "City name: ";
+                clearInputLine();
+                std::getline(std::cin, cityName);
+
+                std::cout << "Start date: ";
+                std::cin >> startDate;
+
+                std::cout << "End date: ";
+                std::cin >> endDate;
+
+                if (!checkDates(startDate, endDate)) {
+                    continue;
+                }
+
+                analytics.showTemperatureTrend(
                     cityName,
                     startDate,
                     endDate
